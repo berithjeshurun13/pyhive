@@ -316,4 +316,4 @@ This package is under active development. Some surfaces (assembler one-shot runn
 
 ## License
 
-Licensed under [Apache 2.0](LIC.md).
+Licensed under [Apache 2.0](LICENSE).
