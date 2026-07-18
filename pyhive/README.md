@@ -2,8 +2,6 @@
 
 **PyHive** is a Python framework for building LLM tool-calling agents and orchestration pipelines. It wraps callable Python functions as typed tools, exposes them as OpenAI/Gemini-compatible JSON schemas, and runs them through queues, chains, DAGs, or ReAct-style agents — with middleware, RBAC, and local storage built in.
 
-( Currently in developmetal phase )
-
 Originally oriented around Ollama-style local LLM workflows, PyHive has grown into a general-purpose **tool registry + agent runtime**.
 
 ---
