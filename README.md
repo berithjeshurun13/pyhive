@@ -2,9 +2,11 @@
 
 **PyHive** is a Python framework for building LLM tool-calling agents and orchestration pipelines. It wraps callable Python functions as typed tools, exposes them as OpenAI/Gemini-compatible JSON schemas, and runs them through queues, chains, DAGs, or ReAct-style agents — with middleware, RBAC, and local storage built in.
 
-( Currently in developmetal phase )
+( Currently in developmental phase )
 
 Originally oriented around Ollama-style local LLM workflows, PyHive has grown into a general-purpose **tool registry + agent runtime**.
+
+PyHive is the framework; **HiveSTEAM** is the on-disk runtime pack it needs for full tool support. Point `PYHIVE_HOME` at a HiveSTEAM tree — see [HiveSTEAM](#hivesteam) below.
 
 ---
 
@@ -19,6 +21,7 @@ Originally oriented around Ollama-style local LLM workflows, PyHive has grown in
 | **Execution** | Priority job queue, background workers, and job tracking |
 | **Security** | Path sanitizer, rate limiter, RBAC scopes, AST sandbox, timeouts |
 | **Runtime** | Config via `PYHIVE_*` env vars, blob/vector storage, plugins, bootstrap assets |
+| **HiveSTEAM** | External dependency pack: binaries, models, NLP data, and language runtimes |
 | **Built-ins** | Web scrape/search, RSS, OCR (Tesseract), downloads (Aria2), audio waveforms, networking |
 
 ---
@@ -28,6 +31,120 @@ Originally oriented around Ollama-style local LLM workflows, PyHive has grown in
 - Python 3.10+
 - Core deps: `pydantic`, `pydantic-settings`, `loguru`
 - Optional / tool-specific: `httpx`, `beautifulsoup4`, `wikipedia-api`, `pytesseract`, `Pillow`, `chromadb`, `cryptography`, `msgpack`, `aiohttp`, `opencv-python`, `numpy`, `python-socketio`, `requests`
+- **HiveSTEAM** (recommended for full tool support): local asset pack with FFmpeg, Tesseract, Aria2, models, and portable runtimes — see [HiveSTEAM](#hivesteam)
+
+---
+
+## HiveSTEAM
+
+**HiveSTEAM** is the local runtime / dependency pack that PyHive needs to run tool-heavy agent workflows. It is not the Python package; it is the on-disk home for binaries, models, language runtimes, blobs, and logs that PyHive resolves through `PYHIVE_HOME`.
+
+| Item | Value |
+|------|--------|
+| **Role** | External asset + runtime pack for PyHive |
+| **Env var** | `PYHIVE_HOME` → path to the HiveSTEAM directory |
+| **Approx. size** | ~5.5 GB (`binaries` ~3.5 GB, `runtime` ~2.0 GB) |
+| **Platform** | Windows-oriented pack (WinPython, portable Java, MinGW, `.exe` tools) |
+
+PyHive’s bootstrap / path code refers to this as the **dependency pack**. Without HiveSTEAM (or an equivalent home), core registry/agent APIs still work for pure-Python tools; binary-backed tools (OCR, Aria2, waveforms, FFmpeg, bundled models) need matching executables on `PATH` or under this pack.
+
+### Point PyHive at HiveSTEAM
+
+```bash
+# Linux / macOS
+export PYHIVE_HOME=/path/to/HiveSTEAM
+
+# Windows (PowerShell)
+$env:PYHIVE_HOME = "G:\HiveSTEAM"
+```
+
+Or persist with `PyHiveEnvManager`:
+
+```python
+from pyhive.utils.env import PyHiveEnvManager
+
+mgr = PyHiveEnvManager()
+mgr.persist("PYHIVE_HOME", r"G:\HiveSTEAM")
+```
+
+`PyHivePathResolver` looks under that home (and falls back to OS defaults / `PATH`) for tools and models. First-run setup can also be driven by `PyHiveBootstrapper`, which verifies and downloads assets from a manifest when configured.
+
+### Layout
+
+```
+HiveSTEAM/                 # = $PYHIVE_HOME
+├── config.json            # Local config stub
+├── binaries/              # Tools, packages, models, NLP assets (~3.5 GB)
+│   ├── etc/               # Shared CLI binaries & DLLs
+│   ├── mdl/               # ML / TTS model trees
+│   │   ├── emb/           # Embeddings (e.g. all-MiniLM-L6-v2)
+│   │   └── vce/           # Voice / TTS voices (Piper-style ONNX packs)
+│   ├── pkg/               # Packaged suites (Tesseract, Nmap)
+│   └── req/               # Language / NLP requirements (spaCy, NLTK)
+├── blobs/                 # One-shot / large model blobs
+│   └── oneshot/           # e.g. yolov7.pt
+├── data/                  # Writable PyHive data root
+│   ├── blobs/             # Content-addressable / runtime blobs
+│   ├── cache/
+│   └── vectors/           # Vector store data
+├── logs/
+└── runtime/               # Language & service environments (~2.0 GB)
+    ├── env/
+    │   ├── python3/       # WinPython toolchain
+    │   ├── java/          # Portable Java
+    │   ├── perl/          # Perl distribution
+    │   ├── lua/           # Lua 5.4
+    │   └── c/             # MinGW-w64 toolchain
+    ├── services/          # Background helpers (e.g. HxLogging.exe)
+    └── standalone/        # Standalone utilities (minify, py2exe, ...)
+```
+
+### What lives where
+
+**`binaries/etc` — shared tools**
+
+CLI/DLL pack used by PyHive tool modules and external process wrappers:
+
+- **Media:** `ffmpeg`, `ffprobe`, `ffplay`, ImageMagick (`magick`, `identify`, ...)
+- **Download / capture:** `aria2c`, `yt-dlp`, `scrcpy` + `adb`
+- **Docs / audio:** `wkhtmltopdf`, `audiowaveform`
+- **Vision / science:** StarNet (`stnet` + TensorFlow weights)
+
+**`binaries/mdl` — models**
+
+| Path | Contents |
+|------|----------|
+| `mdl/emb/all-MiniLM-L6-v2` | Sentence-transformer style embedding model |
+| `mdl/vce/*` | English TTS voice packs (`en_US-*`, `en_GB-*`) |
+
+**`binaries/pkg` — packaged suites**
+
+- **Tesseract** — OCR (`pyhive.tools.ocr`)
+- **Nmap** — network scanning suite
+
+**`binaries/req` — NLP data**
+
+- spaCy `en_core_web_sm-3.7.1`
+- NLTK data (`punkt`, taggers, models, ...)
+
+**`blobs/`** — large one-shot assets not folded into `mdl/` (e.g. `oneshot/yolov7.pt`)
+
+**`data/`** — writable tree: blobs, cache, vectors (storage / Chroma-style workloads)
+
+**`runtime/`** — isolated language environments so tools can run without a system-wide install:
+
+- WinPython (`runtime/env/python3`)
+- Portable Java, Perl, Lua 5.4
+- MinGW-w64 under `runtime/env/c`
+- Service binaries under `runtime/services`
+- Standalone helpers under `runtime/standalone/direct`
+
+### How HiveSTEAM connects to PyHive
+
+1. Point **`PYHIVE_HOME`** at the HiveSTEAM folder.
+2. Install / import the **`pyhive`** package.
+3. Path resolution (`PyHivePathResolver`) and bootstrap (`PyHiveBootstrapper`) use that home for binaries, models, and data.
+4. Built-in tools (OCR, Aria2, waveforms, FFmpeg pipelines, etc.) expect matching executables from this pack.
 
 ---
 
@@ -122,6 +239,9 @@ result = chain.execute({"url": "https://example.com"}, context=ctx)
                        │
                        ▼
          Context (config, storage, emitter)
+                       │
+                       ▼
+         HiveSTEAM ($PYHIVE_HOME): binaries, models, data, runtime
 ```
 
 ### Core concepts
@@ -131,10 +251,11 @@ result = chain.execute({"url": "https://example.com"}, context=ctx)
 | `PyHiveTool` | Callable wrapper: validates args, runs sync/async, returns `PyHiveResponse` |
 | `PyHiveRegistry` | Central catalog of tools; builds LLM definitions |
 | `PyHiveContext` | Per-job identity + injected services (`db`, `storage`, `vectors`, `emitter`) |
-| `PyHiveConfig` | Settings from env (`PYHIVE_HOME`, broker, workers, default model, …) |
+| `PyHiveConfig` | Settings from env (`PYHIVE_HOME`, broker, workers, default model, ...) |
 | `PyHiveJob` / `PyHiveWorker` | Queued execution unit and background consumer |
 | `PyHiveAgent` | LLM → tool → observe loop until a final answer |
 | `PyHiveEmitter` / `PyHiveRoom` | Stream progress/logs to subscribers (local or broker) |
+| HiveSTEAM | On-disk dependency pack resolved via `PYHIVE_HOME` |
 
 ---
 
@@ -170,7 +291,7 @@ pyhive/
 │       ├── rss.py        # RSS/XML read & write
 │       ├── net.py        # Connections & port checks
 │       ├── image.py      # OpenCV image utilities
-│       └── mario.py      # Procedural noise (Perlin, FBM, Worley, …)
+│       └── mario.py      # Procedural noise (Perlin, FBM, Worley, ...)
 │
 ├── utils/
 │   ├── bootstrapper.py   # First-run asset download & verify
@@ -192,7 +313,7 @@ Settings load from environment variables (and optional `.env`) via `PyHiveConfig
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PYHIVE_HOME` | `~/.pyhive` | Data root (blobs, cache, logs) |
+| `PYHIVE_HOME` | `~/.pyhive` (or OS-specific AppData path) | HiveSTEAM / data root (blobs, cache, logs, binaries) |
 | `PYHIVE_DEBUG` | `false` | Debug mode |
 | `PYHIVE_SECRET_KEY` | `changeme-in-production` | Signing / crypto |
 | `PYHIVE_BROKER_URL` | `ws://localhost:8080` | Event broker |
@@ -202,7 +323,7 @@ Settings load from environment variables (and optional `.env`) via `PyHiveConfig
 | `PYHIVE_TASK_TIMEOUT` | `300` | Task timeout (seconds) |
 | `PYHIVE_DEFAULT_MODEL` | `gemini-1.5-pro` | Default LLM model id |
 
-On first use, `PyHiveConfig` creates:
+On first use, `PyHiveConfig` creates (under the home root when using the default layout):
 
 ```
 $PYHIVE_HOME/
@@ -211,7 +332,9 @@ $PYHIVE_HOME/
   logs/
 ```
 
-External binaries (Tesseract, FFmpeg, etc.) resolve via `PyHivePathResolver` / `PyHiveEnvironment` under `$PYHIVE_HOME/bin` or the system `PATH`.
+A full HiveSTEAM checkout also includes `binaries/`, `blobs/`, and `runtime/` as described in [HiveSTEAM](#hivesteam).
+
+External binaries (Tesseract, FFmpeg, etc.) resolve via `PyHivePathResolver` under `$PYHIVE_HOME` (or HiveSTEAM’s `binaries/` tree) or the system `PATH`.
 
 ---
 
@@ -277,6 +400,8 @@ Subclass `PyHivePlugin`, implement `setup()`, and register tools on the injected
 | `tools.download` | Async Aria2 RPC downloads |
 | `tools.audiowaveform` | Async audio waveform generation |
 
+Several of these expect matching binaries from **HiveSTEAM** (or system installs).
+
 ---
 
 ## Response contract
@@ -304,13 +429,15 @@ PyHive uses **loguru**. On Windows, logs default under:
 
 `Documents/PyLMHiveSTEAM/logs/`
 
+When using a HiveSTEAM checkout as `PYHIVE_HOME`, you may also use `$PYHIVE_HOME/logs/` for runtime-adjacent logs.
+
 `ProcessUpdater` can stream job progress over HTTP + Socket.IO to a broker for UI clients.
 
 ---
 
 ## Status
 
-This package is under active development. Some surfaces (assembler one-shot runners, cross-OS logging, distributed queue backends) are partial or platform-specific. Prefer the `core/` APIs above for production-shaped usage.
+This package is under active development. Some surfaces (assembler one-shot runners, cross-OS logging, distributed queue backends) are partial or platform-specific. Prefer the `core/` APIs above for production-shaped usage. HiveSTEAM packing and path layouts are Windows-first today.
 
 ---
 
